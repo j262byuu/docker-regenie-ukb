@@ -67,6 +67,19 @@ def human_channel(channel, label=None):
     return f"alpha {m.group(1)}"
 
 
+def read_base_image():
+    """Base OS label from the Dockerfile's FROM line, so the table cannot drift."""
+    try:
+        with open("Dockerfile", encoding="utf-8") as fh:
+            for line in fh:
+                m = re.match(r"^FROM\s+([^\s:]+):(\S+)", line)
+                if m:
+                    return f"{m.group(1).capitalize()} {m.group(2)}"
+    except OSError as exc:
+        die(f"cannot read Dockerfile for the base image: {exc}")
+    die("no FROM <image>:<tag> line found in Dockerfile")
+
+
 def iso_date(yyyymmdd):
     return f"{yyyymmdd[:4]}-{yyyymmdd[4:6]}-{yyyymmdd[6:]}"
 
@@ -92,10 +105,21 @@ def main():
     regenie = args.regenie
     pin_tag = f"{regenie}-mkl-plink{args.version}"
 
-    # --- version table row ---
-    text = replace_block(text, "PLINK-ROW", (
-        f"\n| [PLINK 2.0](https://www.cog-genomics.org/plink/2.0/) "
+    # --- version table ---
+    # The whole table is regenerated, not just the plink row. A marker comment
+    # sitting between two table rows terminates the table in GitHub-flavored
+    # Markdown, so the markers have to live outside it. (Docker Hub's renderer
+    # tolerated it; GitHub's does not.)
+    base_os = read_base_image()
+    text = replace_block(text, "VERSIONS", (
+        "\n| Tool | Version | Build |\n"
+        "|------|---------|-------|\n"
+        f"| [REGENIE](https://github.com/rgcgithub/regenie) | {regenie} | "
+        f"Official pre-compiled MKL static binary "
+        f"(`regenie_{regenie}.gz_x86_64_Linux_mkl`) |\n"
+        f"| [PLINK 2.0](https://www.cog-genomics.org/plink/2.0/) "
         f"| {chan_h} ({date_h}) | Linux AVX2 |\n"
+        f"| Base OS | {base_os} | x86_64 |\n"
     ))
 
     # --- build provenance path ---

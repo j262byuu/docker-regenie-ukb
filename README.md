@@ -4,13 +4,13 @@ REGENIE v4.1 (MKL build) + PLINK 2.0 (AVX2) in a single Ubuntu 22.04 container, 
 
 ## What's inside
 
+<!-- AUTOGEN:VERSIONS:START -->
 | Tool | Version | Build |
 |------|---------|-------|
 | [REGENIE](https://github.com/rgcgithub/regenie) | v4.1 | Official pre-compiled MKL static binary (`regenie_v4.1.gz_x86_64_Linux_mkl`) |
-<!-- AUTOGEN:PLINK-ROW:START -->
 | [PLINK 2.0](https://www.cog-genomics.org/plink/2.0/) | alpha 7.4 (2026-08-18) | Linux AVX2 |
-<!-- AUTOGEN:PLINK-ROW:END -->
 | Base OS | Ubuntu 22.04 | x86_64 |
+<!-- AUTOGEN:VERSIONS:END -->
 
 Compressed image size: ~55 MB.
 
