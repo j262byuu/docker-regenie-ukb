@@ -103,6 +103,7 @@ jobs:
       # GitHub's runners can, so this is the first place the binary is proven to
       # actually start. A failure here must stop the push.
       - name: Smoke-test the built image
+        id: smoke
         if: steps.decide.outputs.changed == 'true'
         # Runs in dry-run mode too — proving the binary starts is the point.
         env:
@@ -110,7 +111,20 @@ jobs:
         run: |
           set -euo pipefail
           docker run --rm "$IMAGE:${REGENIE}-mkl" regenie --version
-          docker run --rm "$IMAGE:${REGENIE}-mkl" plink2 --version
+          plink_banner=$(docker run --rm "$IMAGE:${REGENIE}-mkl" plink2 --version)
+          echo "$plink_banner"
+          # The S3 key only carries the major channel (alpha7). The binary knows
+          # its minor: "PLINK v2.0.0-a.7.4LM AVX2 Intel (18 Aug 2026)". Take the
+          # exact label from here so the README can say "alpha 7.4" without
+          # scraping the upstream HTML page for it.
+          minor=$(printf '%s' "$plink_banner" | sed -n 's/^PLINK v2\.0\.0-a\.\([0-9.]*[0-9]\).*/\1/p')
+          if [ -n "$minor" ]; then
+            echo "channel_label=alpha $minor" >> "$GITHUB_OUTPUT"
+          else
+            # Not fatal: the README falls back to the major-only label. But say
+            # so, because it means the banner format changed.
+            echo "::warning::could not parse a version from: $plink_banner"
+          fi
 
       # ------------------------------------------------------------------ push
       - name: Log in to Docker Hub
@@ -140,7 +154,8 @@ jobs:
             --version "${{ steps.upstream.outputs.version }}" \
             --prev-channel "${{ steps.current.outputs.plink2_channel }}" \
             --prev-version "${{ steps.current.outputs.plink2_version }}" \
-            --regenie "${{ steps.current.outputs.regenie_version }}"
+            --regenie "${{ steps.current.outputs.regenie_version }}" \
+            ${{ steps.smoke.outputs.channel_label && format('--channel-label "{0}"', steps.smoke.outputs.channel_label) || '' }}
 
       - name: Commit the bump
         if: steps.decide.outputs.changed == 'true' && !inputs.dry_run

@@ -48,14 +48,19 @@ def block_body(text, name):
     return m.group(1) if m else ""
 
 
-def human_channel(channel):
-    """alpha7 -> 'alpha 7'.
+def human_channel(channel, label=None):
+    """alpha7 -> 'alpha 7', or the exact 'alpha 7.4' when we know the minor.
 
-    Deliberately not 'alpha 7.4'. The minor number exists only on the
-    cog-genomics HTML page, never in the S3 bucket we detect from. Scraping a
-    hand-maintained page to gain one digit of precision is a worse trade than
-    printing one digit less.
+    The S3 key only carries the major channel, so detection alone cannot tell
+    alpha 7.4 from alpha 7.1. The binary can: `plink2 --version` prints
+    "PLINK v2.0.0-a.7.4LM AVX2 Intel (18 Aug 2026)". The workflow already runs
+    that as a smoke test, so it passes the parsed minor in via --channel-label
+    rather than scraping the hand-maintained cog-genomics HTML page for it.
     """
+    if label:
+        if not re.match(r"^alpha \d+(\.\d+)*$", label):
+            die(f"--channel-label must look like 'alpha 7.4', got {label!r}")
+        return label
     m = re.match(r"^alpha(\d+)$", channel)
     if not m:
         die(f"unexpected channel format: {channel!r}")
@@ -74,6 +79,7 @@ def main():
     ap.add_argument("--prev-version", help="previous version, for the changelog entry")
     ap.add_argument("--regenie", default="v4.1", help="REGENIE version in the image tags")
     ap.add_argument("--today", help="override today's date (YYYY-MM-DD), for testing")
+    ap.add_argument("--channel-label", help="exact upstream label, e.g. 'alpha 7.4', parsed from plink2 --version")
     ap.add_argument("--platform", default="plink2_linux_avx2_")
     args = ap.parse_args()
 
@@ -81,7 +87,7 @@ def main():
         die(f"--version must be YYYYMMDD, got {args.version!r}")
 
     text = open(README, encoding="utf-8").read()
-    chan_h = human_channel(args.channel)
+    chan_h = human_channel(args.channel, args.channel_label)
     date_h = iso_date(args.version)
     regenie = args.regenie
     pin_tag = f"{regenie}-mkl-plink{args.version}"
