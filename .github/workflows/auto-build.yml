@@ -1,0 +1,224 @@
+# Rebuild and publish j262byuu/regenie-ukb whenever upstream plink2 ships a new
+# Linux AVX2 build.
+#
+# The current plink2 version is not tracked in a separate state file — the
+# Dockerfile's PLINK2_CHANNEL / PLINK2_VERSION ARGs *are* the state. A second
+# copy would drift the moment someone edits the Dockerfile by hand, and there
+# would be no way to tell which one was right.
+name: auto-build
+
+on:
+  schedule:
+    # Weekly, deliberately off the hour: scheduled runs are delayed most at the
+    # top of the hour when GitHub Actions load peaks.
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: auto-build
+  cancel-in-progress: false   # never abort a half-finished push
+
+permissions:
+  contents: write   # bump the Dockerfile, update README, keepalive commit
+  issues: write     # open the REGENIE-update notice
+
+env:
+  IMAGE: j262byuu/regenie-ukb
+  REGENIE_REPO: rgcgithub/regenie
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # keepalive needs real commit timestamps
+
+      # ---------------------------------------------------------------- detect
+      - name: Resolve newest upstream plink2
+        id: upstream
+        run: python3 scripts/latest-plink2.py >> "$GITHUB_OUTPUT"
+
+      - name: Read versions currently pinned in the Dockerfile
+        id: current
+        run: |
+          set -euo pipefail
+          for key in PLINK2_CHANNEL PLINK2_VERSION REGENIE_VERSION; do
+            value=$(sed -n "s/^ARG ${key}=//p" Dockerfile)
+            if [ -z "$value" ]; then
+              echo "::error::ARG ${key} not found in Dockerfile" >&2
+              exit 1
+            fi
+            echo "$(echo "$key" | tr '[:upper:]' '[:lower:]')=${value}" >> "$GITHUB_OUTPUT"
+          done
+
+      - name: Decide whether a rebuild is needed
+        id: decide
+        run: |
+          set -euo pipefail
+          if [ "${{ steps.upstream.outputs.channel }}" = "${{ steps.current.outputs.plink2_channel }}" ] \
+          && [ "${{ steps.upstream.outputs.version }}" = "${{ steps.current.outputs.plink2_version }}" ]; then
+            echo "Already on plink2 ${{ steps.upstream.outputs.channel }}/${{ steps.upstream.outputs.version }} — nothing to do."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "plink2 ${{ steps.current.outputs.plink2_channel }}/${{ steps.current.outputs.plink2_version }}" \
+                 "-> ${{ steps.upstream.outputs.channel }}/${{ steps.upstream.outputs.version }}"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # ----------------------------------------------------------------- build
+      - name: Bump Dockerfile ARGs
+        if: steps.decide.outputs.changed == 'true'
+        run: |
+          set -euo pipefail
+          sed -i "s|^ARG PLINK2_CHANNEL=.*|ARG PLINK2_CHANNEL=${{ steps.upstream.outputs.channel }}|" Dockerfile
+          sed -i "s|^ARG PLINK2_VERSION=.*|ARG PLINK2_VERSION=${{ steps.upstream.outputs.version }}|" Dockerfile
+          # If the ARGs did not actually move, the detector and the comparison
+          # above disagree; fail loudly rather than build an unchanged image.
+          if git diff --quiet Dockerfile; then
+            echo "::error::decide said changed=true but the Dockerfile is unmodified" >&2
+            exit 1
+          fi
+          git --no-pager diff Dockerfile
+
+      - name: Build image
+        if: steps.decide.outputs.changed == 'true'
+        env:
+          VERSION: ${{ steps.upstream.outputs.version }}
+          REGENIE: ${{ steps.current.outputs.regenie_version }}
+        run: |
+          set -euo pipefail
+          docker build \
+            -t "$IMAGE:${REGENIE}-mkl" \
+            -t "$IMAGE:${REGENIE}-mkl-plink${VERSION}" \
+            .
+
+      # The whole reason this runs in CI: the maintainer's local machine is
+      # SSE4.2-only and physically cannot execute the AVX2 plink2 binary.
+      # GitHub's runners can, so this is the first place the binary is proven to
+      # actually start. A failure here must stop the push.
+      - name: Smoke-test the built image
+        if: steps.decide.outputs.changed == 'true'
+        env:
+          REGENIE: ${{ steps.current.outputs.regenie_version }}
+        run: |
+          set -euo pipefail
+          docker run --rm "$IMAGE:${REGENIE}-mkl" regenie --version
+          docker run --rm "$IMAGE:${REGENIE}-mkl" plink2 --version
+
+      # ------------------------------------------------------------------ push
+      - name: Log in to Docker Hub
+        if: steps.decide.outputs.changed == 'true'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Push both tags
+        if: steps.decide.outputs.changed == 'true'
+        env:
+          VERSION: ${{ steps.upstream.outputs.version }}
+          REGENIE: ${{ steps.current.outputs.regenie_version }}
+        run: |
+          set -euo pipefail
+          docker push "$IMAGE:${REGENIE}-mkl"
+          docker push "$IMAGE:${REGENIE}-mkl-plink${VERSION}"
+
+      # --------------------------------------------------------------- publish
+      - name: Update README
+        if: steps.decide.outputs.changed == 'true'
+        run: |
+          set -euo pipefail
+          python3 scripts/update-readme.py \
+            --channel "${{ steps.upstream.outputs.channel }}" \
+            --version "${{ steps.upstream.outputs.version }}" \
+            --prev-channel "${{ steps.current.outputs.plink2_channel }}" \
+            --prev-version "${{ steps.current.outputs.plink2_version }}" \
+            --regenie "${{ steps.current.outputs.regenie_version }}"
+
+      - name: Commit the bump
+        if: steps.decide.outputs.changed == 'true'
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Dockerfile README.md
+          git commit -m "chore: plink2 ${{ steps.upstream.outputs.channel }}/${{ steps.upstream.outputs.version }}" \
+                     -m "Automated bump from ${{ steps.current.outputs.plink2_channel }}/${{ steps.current.outputs.plink2_version }}. Smoke-tested and pushed to Docker Hub."
+          git push
+
+      # Runs after the commit so Docker Hub gets the updated README, not the old
+      # one. Needs a PAT with Read/Write/Delete — Hub requires its top scope for
+      # repository metadata edits, even though pushing images alone does not.
+      - name: Sync README to Docker Hub description
+        if: steps.decide.outputs.changed == 'true'
+        uses: peter-evans/dockerhub-description@v5
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: ${{ env.IMAGE }}
+          readme-filepath: ./README.md
+          short-description: 'REGENIE ${{ steps.current.outputs.regenie_version }} (MKL) + plink2 for UK Biobank GWAS on LSF/SLURM clusters'
+
+      # ------------------------------------------------------- regenie: notify
+      # Not automated further on purpose: a REGENIE bump changes the tag naming
+      # scheme (v4.1-mkl -> v4.2-mkl), which is a decision, not a refresh.
+      - name: Check for a new REGENIE release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CURRENT: ${{ steps.current.outputs.regenie_version }}
+        run: |
+          set -euo pipefail
+          latest=$(gh api "repos/${REGENIE_REPO}/releases/latest" --jq .tag_name)
+          if [ -z "$latest" ]; then
+            echo "::error::could not read the latest REGENIE release tag" >&2
+            exit 1
+          fi
+          if [ "$latest" = "$CURRENT" ]; then
+            echo "REGENIE is current at $CURRENT."
+            exit 0
+          fi
+          # Dedupe on the issues themselves rather than a state file: --state all
+          # includes issues the maintainer already closed, so declining an
+          # upgrade stays declined.
+          if [ -n "$(gh issue list --state all --search "REGENIE $latest in:title" --json number --jq '.[].number')" ]; then
+            echo "An issue for REGENIE $latest already exists."
+            exit 0
+          fi
+          gh issue create \
+            --title "REGENIE $latest is available (image pins $CURRENT)" \
+            --label upstream-update \
+            --body "$(printf '%s\n' \
+              "[REGENIE $latest](https://github.com/${REGENIE_REPO}/releases/tag/$latest) is out; this image still pins \`$CURRENT\`." \
+              "" \
+              "This is not upgraded automatically because the image tags encode the REGENIE version" \
+              "(\`$CURRENT-mkl\` would become \`$latest-mkl\`), so existing pulls would need a decision about" \
+              "whether the old moving tag keeps working." \
+              "" \
+              "To upgrade: bump \`ARG REGENIE_VERSION\` in the Dockerfile, update the tag names in README.md," \
+              "and run this workflow." )"
+
+      # ------------------------------------------------------------- keepalive
+      # GitHub disables scheduled workflows in a public repo after 60 days with
+      # no repository activity. This workflow's normal outcome is "no new plink2,
+      # nothing committed" — so a quiet upstream would switch off the very
+      # automation meant to catch the next release. An empty commit before the
+      # deadline keeps the repo active.
+      - name: Keep the schedule alive
+        if: steps.decide.outputs.changed == 'false'
+        env:
+          KEEPALIVE_AFTER_DAYS: '50'
+        run: |
+          set -euo pipefail
+          last=$(git log -1 --format=%ct)
+          days=$(( ( $(date +%s) - last ) / 86400 ))
+          echo "Last commit was ${days} day(s) ago (threshold: ${KEEPALIVE_AFTER_DAYS})."
+          if [ "$days" -le "$KEEPALIVE_AFTER_DAYS" ]; then
+            exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit --allow-empty \
+            -m "chore: keepalive" \
+            -m "No plink2 release in ${days} days. Empty commit so GitHub does not disable this scheduled workflow at the 60-day inactivity mark."
+          git push

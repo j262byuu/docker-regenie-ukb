@@ -1,0 +1,127 @@
+#!/usr/bin/env python3
+"""Rewrite the version-dependent parts of README.md after a plink2 bump.
+
+README.md is the single documentation source: GitHub renders it as the repo
+front page, and the release workflow pushes the same file to the Docker Hub
+repository description. So it has to stay both human-editable and
+machine-updatable.
+
+Rather than regex over prose — which works right up until someone rewords a
+sentence and the pattern silently stops matching — the version-dependent spans
+are fenced with `<!-- AUTOGEN:<NAME>:START/END -->` markers. This script only
+ever touches text between markers; everything outside is hand-written and safe
+to edit freely. A missing marker is a hard error, not a silent no-op.
+
+Idempotent: running twice with the same arguments produces no diff.
+"""
+
+import argparse
+import datetime
+import re
+import sys
+
+README = "README.md"
+
+
+def die(msg):
+    print(f"update-readme: {msg}", file=sys.stderr)
+    sys.exit(1)
+
+
+def replace_block(text, name, new_body):
+    """Swap the contents between AUTOGEN:<name>:START/END markers."""
+    start = f"<!-- AUTOGEN:{name}:START -->"
+    end = f"<!-- AUTOGEN:{name}:END -->"
+    pattern = re.compile(
+        re.escape(start) + r"(.*?)" + re.escape(end), re.DOTALL
+    )
+    if not pattern.search(text):
+        die(f"marker block AUTOGEN:{name} not found in {README} — "
+            f"was the block removed or renamed by a hand edit?")
+    return pattern.sub(lambda _: f"{start}{new_body}{end}", text, count=1)
+
+
+def block_body(text, name):
+    start = f"<!-- AUTOGEN:{name}:START -->"
+    end = f"<!-- AUTOGEN:{name}:END -->"
+    m = re.search(re.escape(start) + r"(.*?)" + re.escape(end), text, re.DOTALL)
+    return m.group(1) if m else ""
+
+
+def human_channel(channel):
+    """alpha7 -> 'alpha 7'.
+
+    Deliberately not 'alpha 7.4'. The minor number exists only on the
+    cog-genomics HTML page, never in the S3 bucket we detect from. Scraping a
+    hand-maintained page to gain one digit of precision is a worse trade than
+    printing one digit less.
+    """
+    m = re.match(r"^alpha(\d+)$", channel)
+    if not m:
+        die(f"unexpected channel format: {channel!r}")
+    return f"alpha {m.group(1)}"
+
+
+def iso_date(yyyymmdd):
+    return f"{yyyymmdd[:4]}-{yyyymmdd[4:6]}-{yyyymmdd[6:]}"
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--channel", required=True, help="e.g. alpha7")
+    ap.add_argument("--version", required=True, help="e.g. 20260818")
+    ap.add_argument("--prev-channel", help="previous channel, for the changelog entry")
+    ap.add_argument("--prev-version", help="previous version, for the changelog entry")
+    ap.add_argument("--regenie", default="v4.1", help="REGENIE version in the image tags")
+    ap.add_argument("--today", help="override today's date (YYYY-MM-DD), for testing")
+    ap.add_argument("--platform", default="plink2_linux_avx2_")
+    args = ap.parse_args()
+
+    if not re.match(r"^\d{8}$", args.version):
+        die(f"--version must be YYYYMMDD, got {args.version!r}")
+
+    text = open(README, encoding="utf-8").read()
+    chan_h = human_channel(args.channel)
+    date_h = iso_date(args.version)
+    regenie = args.regenie
+    pin_tag = f"{regenie}-mkl-plink{args.version}"
+
+    # --- version table row ---
+    text = replace_block(text, "PLINK-ROW", (
+        f"\n| [PLINK 2.0](https://www.cog-genomics.org/plink/2.0/) "
+        f"| {chan_h} ({date_h}) | Linux AVX2 |\n"
+    ))
+
+    # --- build provenance path ---
+    text = replace_block(text, "PLINK-URL", (
+        f"`plink2-assets/{args.channel}/{args.platform}{args.version}.zip`"
+    ))
+
+    # --- tags ---
+    text = replace_block(text, "TAGS", (
+        f"\n- `{regenie}-mkl` — moving tag, always the latest build. "
+        f"**Currently:** REGENIE {regenie} (MKL) + plink2 {chan_h} ({date_h}).\n"
+        f"- `{pin_tag}` — immutable pin of the same build. "
+        f"Use this one for reproducible pipelines.\n"
+    ))
+
+    # --- changelog ---
+    if args.prev_channel and args.prev_version:
+        today = args.today or datetime.date.today().isoformat()
+        prev_h = f"{human_channel(args.prev_channel)} ({iso_date(args.prev_version)})"
+        entry = (
+            f"- **{today}** — plink2 bumped from {prev_h} to {chan_h} ({date_h}). "
+            f"REGENIE unchanged at {regenie}. `{regenie}-mkl` now points at this build; "
+            f"the previous build remains available as an immutable pin."
+        )
+        existing = block_body(text, "CHANGELOG")
+        # Idempotency: an identical entry means this bump was already recorded.
+        if entry not in existing:
+            text = replace_block(text, "CHANGELOG", f"\n{entry}\n{existing.strip()}\n")
+
+    open(README, "w", encoding="utf-8").write(text)
+    print(f"update-readme: README.md now describes plink2 {chan_h} ({date_h})")
+
+
+if __name__ == "__main__":
+    main()

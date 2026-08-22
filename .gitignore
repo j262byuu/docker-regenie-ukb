@@ -1,0 +1,15 @@
+# Trellis planning artifacts — local only, not part of the published image repo.
+# Design rationale that matters to readers of this repo lives in README.md and
+# in comments inside scripts/, not here.
+.trellis/
+# AGENTS.md documents .trellis/ paths and .gitattributes only carries a merge
+# rule for .trellis/workspace/ — both are dead references once .trellis/ is gone.
+AGENTS.md
+.gitattributes
+
+# Editor / agent local config
+.claude/
+
+# OS noise
+.DS_Store
+Thumbs.db
