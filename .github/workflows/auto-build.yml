@@ -13,6 +13,11 @@ on:
     # top of the hour when GitHub Actions load peaks.
     - cron: '17 6 * * 1'
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Build and smoke-test, but do not push, commit, or touch Docker Hub'
+        type: boolean
+        default: false
 
 concurrency:
   group: auto-build
@@ -30,7 +35,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0   # keepalive needs real commit timestamps
 
@@ -99,6 +104,7 @@ jobs:
       # actually start. A failure here must stop the push.
       - name: Smoke-test the built image
         if: steps.decide.outputs.changed == 'true'
+        # Runs in dry-run mode too — proving the binary starts is the point.
         env:
           REGENIE: ${{ steps.current.outputs.regenie_version }}
         run: |
@@ -108,14 +114,14 @@ jobs:
 
       # ------------------------------------------------------------------ push
       - name: Log in to Docker Hub
-        if: steps.decide.outputs.changed == 'true'
+        if: steps.decide.outputs.changed == 'true' && !inputs.dry_run
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Push both tags
-        if: steps.decide.outputs.changed == 'true'
+        if: steps.decide.outputs.changed == 'true' && !inputs.dry_run
         env:
           VERSION: ${{ steps.upstream.outputs.version }}
           REGENIE: ${{ steps.current.outputs.regenie_version }}
@@ -126,7 +132,7 @@ jobs:
 
       # --------------------------------------------------------------- publish
       - name: Update README
-        if: steps.decide.outputs.changed == 'true'
+        if: steps.decide.outputs.changed == 'true' && !inputs.dry_run
         run: |
           set -euo pipefail
           python3 scripts/update-readme.py \
@@ -137,7 +143,7 @@ jobs:
             --regenie "${{ steps.current.outputs.regenie_version }}"
 
       - name: Commit the bump
-        if: steps.decide.outputs.changed == 'true'
+        if: steps.decide.outputs.changed == 'true' && !inputs.dry_run
         run: |
           set -euo pipefail
           git config user.name  "github-actions[bot]"
@@ -151,7 +157,7 @@ jobs:
       # one. Needs a PAT with Read/Write/Delete — Hub requires its top scope for
       # repository metadata edits, even though pushing images alone does not.
       - name: Sync README to Docker Hub description
-        if: steps.decide.outputs.changed == 'true'
+        if: steps.decide.outputs.changed == 'true' && !inputs.dry_run
         uses: peter-evans/dockerhub-description@v5
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
@@ -205,7 +211,7 @@ jobs:
       # automation meant to catch the next release. An empty commit before the
       # deadline keeps the repo active.
       - name: Keep the schedule alive
-        if: steps.decide.outputs.changed == 'false'
+        if: steps.decide.outputs.changed == 'false' && !inputs.dry_run
         env:
           KEEPALIVE_AFTER_DAYS: '50'
         run: |
