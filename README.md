@@ -8,7 +8,7 @@ REGENIE v4.1 (MKL build) + PLINK 2.0 (AVX2) in a single Ubuntu 22.04 container, 
 | Tool | Version | Build |
 |------|---------|-------|
 | [REGENIE](https://github.com/rgcgithub/regenie) | v4.1 | Official pre-compiled MKL static binary (`regenie_v4.1.gz_x86_64_Linux_mkl`) |
-| [PLINK 2.0](https://www.cog-genomics.org/plink/2.0/) | alpha 7.4 (2026-08-18) | Linux AVX2 |
+| [PLINK 2.0](https://www.cog-genomics.org/plink/2.0/) | alpha 7.6 (2026-09-14) | Linux AVX2 |
 | Base OS | Ubuntu 22.04 | x86_64 |
 <!-- AUTOGEN:VERSIONS:END -->
 
@@ -80,7 +80,7 @@ Adjust `--bsize`, `--threads`, and `--lowmem-prefix` to match your node's memory
 ## Build provenance
 
 - Built from upstream pre-compiled binaries rather than from source. This preserves the exact MKL build the REGENIE team ships and tests, and the exact plink2 binary published on the cog-genomics S3 bucket:
-  <!-- AUTOGEN:PLINK-URL:START -->`plink2-assets/alpha7/plink2_linux_avx2_20260818.zip`<!-- AUTOGEN:PLINK-URL:END -->
+  <!-- AUTOGEN:PLINK-URL:START -->`plink2-assets/alpha7/plink2_linux_avx2_20260914.zip`<!-- AUTOGEN:PLINK-URL:END -->
 - Minimal runtime layer: `libgomp1`, `libcurl4`, `locales`, plus `wget` / `unzip` / `ca-certificates` for the build stage.
 
 ## How this image stays current
@@ -111,8 +111,8 @@ naming scheme, so the workflow only opens an issue when one appears.
 ## Tags
 
 <!-- AUTOGEN:TAGS:START -->
-- `v4.1-mkl` — moving tag, always the latest build. **Currently:** REGENIE v4.1 (MKL) + plink2 alpha 7.4 (2026-08-18).
-- `v4.1-mkl-plink20260818` — immutable pin of the same build. Use this one for reproducible pipelines.
+- `v4.1-mkl` — moving tag, always the latest build. **Currently:** REGENIE v4.1 (MKL) + plink2 alpha 7.6 (2026-09-14).
+- `v4.1-mkl-plink20260914` — immutable pin of the same build. Use this one for reproducible pipelines.
 <!-- AUTOGEN:TAGS:END -->
 
 Naming pattern: `<regenie-version>-mkl` for the moving tag, `<regenie-version>-mkl-plink<YYYYMMDD>` for immutable pins.
@@ -120,6 +120,7 @@ Naming pattern: `<regenie-version>-mkl` for the moving tag, `<regenie-version>-m
 ### Changelog
 
 <!-- AUTOGEN:CHANGELOG:START -->
+- **2026-09-14** — plink2 bumped from alpha 7 (2026-08-18) to alpha 7.6 (2026-09-14). REGENIE unchanged at v4.1. `v4.1-mkl` now points at this build; the previous build remains available as an immutable pin.
 - **2026-08-22** — plink2 bumped from alpha 6 (2026-02-28) to alpha 7.4 (2026-08-18). REGENIE unchanged at v4.1. Note that `v4.1-mkl` was overwritten in place; the earlier alpha 6 build is no longer available under any tag.
 <!-- AUTOGEN:CHANGELOG:END -->
 

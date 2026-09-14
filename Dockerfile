@@ -14,7 +14,7 @@ FROM ubuntu:22.04
 ARG DEBIAN_FRONTEND=noninteractive
 ARG REGENIE_VERSION=v4.1
 ARG PLINK2_CHANNEL=alpha7
-ARG PLINK2_VERSION=20260818
+ARG PLINK2_VERSION=20260914
 
 # ---- minimal runtime deps ------------------------------------------------
 # libcurl4 — needed because REGENIE MKL binary links against it.
